@@ -17,6 +17,8 @@
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
+#define DIFF_WINDOW 5
+
 typedef struct
 {
     float kp;
@@ -81,6 +83,14 @@ DMA_HandleTypeDef hdma_usart2_rx;
 DMA_HandleTypeDef hdma_usart2_tx;
 
 /* USER CODE BEGIN PV */
+static int16_t d1_buf[DIFF_WINDOW] = {0};
+static int16_t d2_buf[DIFF_WINDOW] = {0};
+
+static uint8_t diff_idx = 0;
+
+static int32_t d1_sum = 0;
+static int32_t d2_sum = 0;
+
 volatile int16_t enc1_prev = 0;
 volatile int16_t enc2_prev = 0;
 
@@ -118,8 +128,8 @@ ParseState parser_state = STATE_SOF1;
 uint8_t tx_seq_counter = 0;
 volatile uint8_t telemetry_loop_counter = 0;
 
-PI_Controller pi1 = { .kp = 18.0f, .ki = 1.0f, .integral = 0.0f, .outMin = -255.0f, .outMax = 255.0f };
-PI_Controller pi2 = { .kp = 18.0f, .ki = 1.0f, .integral = 0.0f, .outMin = -255.0f, .outMax = 255.0f };
+PI_Controller pi1 = { .kp = 1.0f, .ki = 30.0f, .integral = 0.0f, .outMin = -255.0f, .outMax = 255.0f };
+PI_Controller pi2 = { .kp = 1.0f, .ki = 30.0f, .integral = 0.0f, .outMin = -255.0f, .outMax = 255.0f };
 
 static const uint16_t crc16_table[256] = {
     0x0000, 0x1021, 0x2042, 0x3063, 0x4084, 0x50A5, 0x60C6, 0x70E7, 0x8108, 0x9129, 0xA14A, 0xB16B, 0xC18C, 0xD1AD, 0xE1CE, 0xF1EF,
@@ -174,9 +184,22 @@ uint16_t Compute_CRC16(const uint8_t *data, uint16_t len) {
     return crc;
 }
 
+static inline int16_t MovingAverageDiff(int16_t new_d,
+                                         int16_t *buf,
+                                         int32_t *sum,
+                                         uint8_t idx)
+{
+    *sum -= buf[idx];
+    *sum += new_d;
+    buf[idx] = new_d;
+
+    return (int16_t)(*sum / DIFF_WINDOW);
+}
+
 float PI_Update(PI_Controller *pi, float ref, float meas, float dt) {
     float error = ref - meas;
-    float p_term = pi->kp * error;
+//    float p_term = pi->kp * error;
+    float p_term = - pi->kp * meas;
     float i_update = error * pi->ki * dt;
 
     // 1. Calculate tentative total output
@@ -231,13 +254,18 @@ void SpeedControlLoop(void)
     enc1_count = enc1_now;
     enc2_count = enc2_now;
 
-    int16_t d1 = enc1_now - enc1_prev;
-    int16_t d2 = enc2_now - enc2_prev;
-    d1_g = d1;
-    d2_g = d2;
+    int16_t d1_raw = enc1_now - enc1_prev;
+    int16_t d2_raw = enc2_now - enc2_prev;
+
+    int16_t d1 = MovingAverageDiff(d1_raw, d1_buf, &d1_sum, diff_idx);
+    int16_t d2 = MovingAverageDiff(d2_raw, d2_buf, &d2_sum, diff_idx);
 
     enc1_prev = enc1_now;
     enc2_prev = enc2_now;
+
+    diff_idx++;
+    if (diff_idx >= DIFF_WINDOW)
+        diff_idx = 0;
 
     float rpm1 = ((float)d1 * 10.0f) / 144.0f;
     float rpm2 = -((float)d2 * 10.0f) / 144.0f;
@@ -466,6 +494,9 @@ int main(void)
 
   MD03_Write(MOTOR1_ADDR, REG_ACCELERATION, 0);
   MD03_Write(MOTOR2_ADDR, REG_ACCELERATION, 0);
+
+  uint32_t lastTime = 0;
+  uint8_t reg_state = 0;
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -473,11 +504,34 @@ int main(void)
   while (1)
   {
 	  CheckForInboundPackets();
-    /* USER CODE END WHILE */
 	  if (tx_pending && uart_tx_ready) {
 	      tx_pending = 0;
 	      SendTelemetryToROS();
 	  }
+
+//	  if ((HAL_GetTick() - lastTime) >= 2000)   // 2000 ms = 2 seconds
+//	  {
+//		  lastTime = HAL_GetTick();
+//		  if(reg_state++ > 3) reg_state = 0;
+//		  // Code executed every 2 seconds
+//	  }
+//
+//	  switch(reg_state)
+//	  {
+//	  case 0:
+//	  case 2:
+//		  rpm1_setpoint = 0;
+//		  rpm2_setpoint = 0;
+//		  break;
+//	  case 1:
+//		  rpm1_setpoint = rpm2_setpoint = 80;
+//		  break;
+//	  case 3:
+//		  rpm1_setpoint = rpm2_setpoint = -80;
+//		  break;
+//	  }
+    /* USER CODE END WHILE */
+
     /* USER CODE BEGIN 3 */
   }
   /* USER CODE END 3 */
