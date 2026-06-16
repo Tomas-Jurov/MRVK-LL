@@ -82,6 +82,8 @@ UART_HandleTypeDef huart2;
 DMA_HandleTypeDef hdma_usart2_rx;
 DMA_HandleTypeDef hdma_usart2_tx;
 
+uint16_t u_left = 0;
+
 /* USER CODE BEGIN PV */
 static int16_t d1_buf[DIFF_WINDOW] = {0};
 static int16_t d2_buf[DIFF_WINDOW] = {0};
@@ -216,8 +218,8 @@ float PI_Update(PI_Controller *pi, float ref, float meas, float dt) {
     }
 
     // 3. Optional safety clamp for the integral state itself
-    if (pi->integral > pi->outMax) pi->integral = pi->outMax;
-    if (pi->integral < pi->outMin) pi->integral = pi->outMin;
+//    if (pi->integral > pi->outMax) pi->integral = pi->outMax;
+//    if (pi->integral < pi->outMin) pi->integral = pi->outMin;
 
     // 4. Clamp the final output being sent to the motor
     if (out > pi->outMax) out = pi->outMax;
@@ -243,6 +245,7 @@ void MD03_SetMotor(uint8_t addr, int16_t command) {
     if (command > 255) command = 255;
     MD03_Write(addr, REG_COMMAND, dir);
     MD03_Write(addr, REG_SPEED, (uint8_t)command);
+    u_left = command;
 }
 
 /* Speed Tracking Engine (Executes at 100Hz inside Hardware Counter Interrupt) */
@@ -267,8 +270,12 @@ void SpeedControlLoop(void)
     if (diff_idx >= DIFF_WINDOW)
         diff_idx = 0;
 
-    float rpm1 = ((float)d1 * 10.0f) / 144.0f;
-    float rpm2 = -((float)d2 * 10.0f) / 144.0f;
+//    float rpm1 = ((float)d1 * 10.0f) / 144.0f;
+//    float rpm2 = -((float)d2 * 10.0f) / 144.0f;
+
+    float rpm1 = ((float)d1 * 600) / (144.0f * 66.72);
+    float rpm2 = -((float)d2 * 600) / (144.0f * 66.72);
+
 
     rmp_g1 = rpm1;
     rmp_g2 = rpm2;
