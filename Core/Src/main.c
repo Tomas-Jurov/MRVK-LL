@@ -82,9 +82,11 @@ UART_HandleTypeDef huart2;
 DMA_HandleTypeDef hdma_usart2_rx;
 DMA_HandleTypeDef hdma_usart2_tx;
 
+/* USER CODE BEGIN PV */
 uint16_t u_left = 0;
 
-/* USER CODE BEGIN PV */
+HAL_StatusTypeDef status;
+
 static int16_t d1_buf[DIFF_WINDOW] = {0};
 static int16_t d2_buf[DIFF_WINDOW] = {0};
 
@@ -120,6 +122,8 @@ volatile float rmp_g2 = 0;
 volatile int16_t d1_g = 0;
 volatile int16_t d2_g = 0;
 
+volatile uint8_t speed_control_flag = 0;
+
 uint8_t dma_rx_buffer[RX_DMA_BUF_SIZE];
 uint16_t last_dma_read_ptr = 0;
 
@@ -129,6 +133,8 @@ ParseState parser_state = STATE_SOF1;
 
 uint8_t tx_seq_counter = 0;
 volatile uint8_t telemetry_loop_counter = 0;
+volatile uint32_t uart_rx_led_until = 0;
+
 
 PI_Controller pi1 = { .kp = 1.0f, .ki = 30.0f, .integral = 0.0f, .outMin = -255.0f, .outMax = 255.0f };
 PI_Controller pi2 = { .kp = 1.0f, .ki = 30.0f, .integral = 0.0f, .outMin = -255.0f, .outMax = 255.0f };
@@ -368,9 +374,13 @@ void CheckForInboundPackets(void) {
     uint16_t current_dma_write_ptr = RX_DMA_BUF_SIZE - __HAL_DMA_GET_COUNTER(&hdma_usart2_rx);
 
     while (last_dma_read_ptr != current_dma_write_ptr) {
-        uint8_t byte_to_process = dma_rx_buffer[last_dma_read_ptr];
+    	uint8_t byte_to_process = dma_rx_buffer[last_dma_read_ptr];
         ProcessSerialByte(byte_to_process);
         last_dma_read_ptr = (last_dma_read_ptr + 1) % RX_DMA_BUF_SIZE;
+
+        // UART RX indication
+        HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_SET);
+        uart_rx_led_until = HAL_GetTick() + 80;   // keep LED on 80 ms
     }
 }
 
@@ -440,7 +450,8 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
     if(htim->Instance == TIM6)
     {
         // 1. Core loop steps at 100 Hz
-        SpeedControlLoop();
+    	speed_control_flag = 1;
+//        SpeedControlLoop();
 
         CaptureSnapshot();   // <-- ADD THIS HERE
 
@@ -489,6 +500,10 @@ int main(void)
   MX_TIM6_Init();
   MX_ADC1_Init();
   /* USER CODE BEGIN 2 */
+
+//  while(HAL_GPIO_ReadPin(B1_GPIO_Port, B1_Pin) != 0);
+  HAL_Delay(10000);
+
   HAL_NVIC_SetPriority(TIM6_DAC_IRQn, 1, 0);
   HAL_NVIC_EnableIRQ(TIM6_DAC_IRQn);
 
@@ -497,8 +512,11 @@ int main(void)
   HAL_TIM_Base_Start_IT(&htim6);
 
 //  HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_raw_buffer, 2);
-  HAL_UART_Receive_DMA(&huart2, dma_rx_buffer, RX_DMA_BUF_SIZE);
-
+  HAL_UART_DMAStop(&huart2);
+  memset(dma_rx_buffer, 0, RX_DMA_BUF_SIZE);
+  last_dma_read_ptr = 0;
+  parser_state = STATE_SOF1;
+  status = HAL_UART_Receive_DMA(&huart2, dma_rx_buffer, RX_DMA_BUF_SIZE);
   MD03_Write(MOTOR1_ADDR, REG_ACCELERATION, 0);
   MD03_Write(MOTOR2_ADDR, REG_ACCELERATION, 0);
 
@@ -514,6 +532,18 @@ int main(void)
 	  if (tx_pending && uart_tx_ready) {
 	      tx_pending = 0;
 	      SendTelemetryToROS();
+	  }
+
+	  if(speed_control_flag)
+	  {
+		  SpeedControlLoop();
+		  speed_control_flag = 0;
+	  }
+
+	  // Turn LED off after timeout
+	  if ((int32_t)(HAL_GetTick() - uart_rx_led_until) >= 0)
+	  {
+		  HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_RESET);
 	  }
 
 //	  if ((HAL_GetTick() - lastTime) >= 2000)   // 2000 ms = 2 seconds
