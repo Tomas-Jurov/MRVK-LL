@@ -58,7 +58,7 @@ volatile TelemetrySnapshot snapshot;
 #define REG_SPEED        0x02
 #define REG_ACCELERATION 0x03
 
-#define RX_DMA_BUF_SIZE  64
+#define RX_DMA_BUF_SIZE  256
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -330,9 +330,29 @@ void ProcessSerialByte(uint8_t byte) {
 }
 
 void CheckForInboundPackets(void) {
+
+	if (__HAL_UART_GET_FLAG(&huart2, UART_FLAG_ORE) ||
+	        __HAL_UART_GET_FLAG(&huart2, UART_FLAG_FE) ||
+	        __HAL_UART_GET_FLAG(&huart2, UART_FLAG_NE)) {
+
+	        // Clear all error flags
+	        __HAL_UART_CLEAR_PEFLAG(&huart2);
+	        __HAL_UART_CLEAR_FEFLAG(&huart2);
+	        __HAL_UART_CLEAR_NEFLAG(&huart2);
+	        __HAL_UART_CLEAR_OREFLAG(&huart2);
+
+	        // IMPORTANT: Must restart DMA to resume receiving
+	        HAL_UART_DMAStop(&huart2);
+	        HAL_UART_Receive_DMA(&huart2, dma_rx_buffer, RX_DMA_BUF_SIZE);
+
+	        // Reset your read pointer since the stream was interrupted
+	        last_dma_read_ptr = 0;
+	    }
+
     uint16_t current_dma_write_ptr = RX_DMA_BUF_SIZE - __HAL_DMA_GET_COUNTER(&hdma_usart2_rx);
 
     while (last_dma_read_ptr != current_dma_write_ptr) {
+    	HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
         uint8_t byte_to_process = dma_rx_buffer[last_dma_read_ptr];
         ProcessSerialByte(byte_to_process);
         last_dma_read_ptr = (last_dma_read_ptr + 1) % RX_DMA_BUF_SIZE;
@@ -473,6 +493,7 @@ int main(void)
   while (1)
   {
 	  CheckForInboundPackets();
+	  /* Non-blocking LED blink (toggle every 500ms) */
     /* USER CODE END WHILE */
 	  if (tx_pending && uart_tx_ready) {
 	      tx_pending = 0;
