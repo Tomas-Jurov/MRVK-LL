@@ -1,0 +1,24 @@
+# Eclipse workspace
+.metadata/
+
+# Build output
+Debug/
+Release/
+
+# Optional build directories
+build/
+
+# Temporary files
+*.o
+*.d
+*.su
+*.map
+*.elf
+*.hex
+*.bin
+*.list
+*.obj
+
+# OS files
+Thumbs.db
+.DS_Store
